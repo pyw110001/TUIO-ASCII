@@ -223,15 +223,24 @@ export class TCPSender {
   }
 
   updateConfig(mode, host, port) {
+    console.log(`TCP Sender updateConfig called: mode=${mode}, host=${host}, port=${port}`);
+    console.log(`当前配置: mode=${this.mode}, host=${this.host}, port=${this.port}`);
+    
     const changed = this.mode !== mode || this.host !== host || this.port !== port;
     
+    console.log(`配置是否变化: ${changed}`);
+    
     if (changed) {
+      console.log('配置已变化，重新启动TCP连接...');
       this.stop();
       this.mode = mode;
-      this.host = host;
-      this.port = port;
+      this.host = host || '127.0.0.1'; // 确保有默认值
+      this.port = port || 8080; // 确保有默认值
       this.reconnectAttempts = 0; // 重置重连计数
       this.start();
+      console.log(`TCP Sender 已更新: mode=${this.mode}, host=${this.host}, port=${this.port}`);
+    } else {
+      console.log('配置未变化，无需重启');
     }
   }
 

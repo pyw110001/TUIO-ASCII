@@ -26,9 +26,16 @@ export default function ConfigPage({ api, wsData }) {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await api.updateConfig(config);
-      alert('配置已保存');
+      console.log('保存配置:', config);
+      const result = await api.updateConfig(config);
+      console.log('保存结果:', result);
+      if (result.success) {
+        alert(`配置已保存成功！\nTCP模式: ${config.tcpMode}\n${config.tcpMode === 'client' ? `目标IP: ${config.tcpHost}\n目标端口: ${config.tcpPort}` : `监听端口: ${config.tcpPort}`}`);
+      } else {
+        alert('保存失败: ' + (result.message || '未知错误'));
+      }
     } catch (error) {
+      console.error('保存配置错误:', error);
       alert('保存失败: ' + error.message);
     } finally {
       setSaving(false);
@@ -72,10 +79,28 @@ export default function ConfigPage({ api, wsData }) {
                 <label>目标 IP 地址</label>
                 <input
                   type="text"
-                  value={config.tcpHost}
-                  onChange={(e) => setConfig({ ...config, tcpHost: e.target.value })}
+                  value={config.tcpHost || ''}
+                  onChange={(e) => {
+                    const newHost = e.target.value.trim();
+                    setConfig({ ...config, tcpHost: newHost });
+                    console.log('TCP Host changed to:', newHost);
+                  }}
                   placeholder="例如: 127.0.0.1 或 192.168.1.100"
+                  style={{ 
+                    width: '100%',
+                    padding: '8px 12px',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '4px',
+                    fontSize: '14px',
+                    background: 'var(--bg-secondary)',
+                    color: 'var(--text-primary)'
+                  }}
                 />
+                {config.tcpHost && (
+                  <div style={{ marginTop: '5px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    当前设置: <strong>{config.tcpHost}</strong>
+                  </div>
+                )}
               </div>
               <div className="form-group">
                 <label>目标端口</label>
