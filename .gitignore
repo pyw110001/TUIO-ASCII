@@ -6,4 +6,6 @@ client/.vite/
 .DS_Store
 .env
 *.local
+config.json
+zones.json
 

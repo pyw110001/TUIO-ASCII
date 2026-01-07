@@ -9,6 +9,7 @@ import { TCPSender } from './tcp-sender.js';
 import { configRouter } from './routes/config.js';
 import { zoneRouter } from './routes/zones.js';
 import { testRouter } from './routes/test.js';
+import { loadConfig, loadZones } from './config-manager.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -17,24 +18,14 @@ const wss = new WebSocketServer({ server });
 app.use(cors());
 app.use(express.json());
 
+// 从文件加载配置
+const savedConfig = loadConfig();
+const savedZones = loadZones();
+
 // 全局状态
 const state = {
-  config: {
-    udpPort: 3333,
-    tcpMode: 'client', // 'client' or 'server'
-    tcpHost: '127.0.0.1',
-    tcpPort: 8080,
-    cursorTimeout: 300,
-    sendStrategy: 'onChange', // 'onChange' or 'heartbeat'
-    heartbeatInterval: 1000,
-    zoneMode: 'grid', // 'grid' or 'custom'
-    gridCols: 1,
-    gridRows: 4
-  },
-  zones: {
-    grid: { cols: 1, rows: 4, zones: [] },
-    custom: []
-  },
+  config: savedConfig,
+  zones: savedZones,
   cursors: new Map(), // cursorId -> { id, x, y, lastUpdate }
   zoneStates: new Map(), // zoneId -> { occupied: bool, lastChange }
   tcpConnected: false,
@@ -43,7 +34,8 @@ const state = {
   sendFailCount: 0,
   lastSentFrame: null,
   sentFrames: [], // 帧历史记录（最近50条）
-  errors: []
+  errors: [],
+  outputZoneFilter: null // null表示输出所有区域，数字表示只输出该区域
 };
 
 // 初始化组件
@@ -113,7 +105,17 @@ function checkZoneStateChanges(oldStates, newStates) {
 }
 
 function sendFramesForZones(zoneIds) {
-  for (const zoneId of zoneIds) {
+  // 如果设置了区域过滤，只发送指定区域
+  let zonesToSend = zoneIds;
+  if (state.outputZoneFilter !== null) {
+    zonesToSend = zoneIds.filter(id => id === state.outputZoneFilter);
+    if (zonesToSend.length === 0) {
+      // 如果过滤后没有区域，不发送任何数据
+      return;
+    }
+  }
+  
+  for (const zoneId of zonesToSend) {
     const zoneState = state.zoneStates.get(zoneId);
     if (!zoneState) continue;
     
@@ -197,7 +199,8 @@ wss.on('connection', (ws) => {
     sendFailCount: state.sendFailCount,
     lastSentFrame: state.lastSentFrame,
     sentFrames: state.sentFrames.slice(-20), // 只发送最近20条
-    errors: state.errors.slice(-20)
+    errors: state.errors.slice(-20),
+    outputZoneFilter: state.outputZoneFilter
   }}));
   
   ws.on('close', () => {
@@ -229,7 +232,35 @@ app.get('/api/status', (req, res) => {
     sendFailCount: state.sendFailCount,
     lastSentFrame: state.lastSentFrame,
     sentFrames: state.sentFrames.slice(-20),
-    errors: state.errors.slice(-20)
+    errors: state.errors.slice(-20),
+    outputZoneFilter: state.outputZoneFilter
+  });
+});
+
+// 设置输出区域过滤
+app.post('/api/monitor/set-output-zone', (req, res) => {
+  const { zoneId } = req.body;
+  
+  // zoneId 为 null 或 undefined 表示输出所有区域
+  // 为数字表示只输出该区域
+  if (zoneId === null || zoneId === undefined) {
+    state.outputZoneFilter = null;
+    console.log('[监控] 已设置为输出所有区域');
+  } else {
+    const zoneIdNum = parseInt(zoneId);
+    if (isNaN(zoneIdNum) || zoneIdNum < 1) {
+      return res.status(400).json({ error: '无效的区域ID' });
+    }
+    state.outputZoneFilter = zoneIdNum;
+    console.log(`[监控] 已设置为只输出区域 ${zoneIdNum}`);
+  }
+  
+  // 广播更新
+  broadcast({ type: 'outputZoneFilter', data: state.outputZoneFilter });
+  
+  res.json({ 
+    success: true, 
+    outputZoneFilter: state.outputZoneFilter 
   });
 });
 

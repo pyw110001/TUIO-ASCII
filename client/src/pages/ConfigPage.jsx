@@ -14,11 +14,35 @@ export default function ConfigPage({ api, wsData }) {
     gridRows: 4,
   });
   const [saving, setSaving] = useState(false);
+  const [configLoaded, setConfigLoaded] = useState(false);
+
+  // 页面加载时从API获取配置
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        const serverConfig = await api.getConfig();
+        console.log('从API加载配置:', serverConfig);
+        if (serverConfig) {
+          setConfig(serverConfig);
+          setConfigLoaded(true);
+        }
+      } catch (error) {
+        console.error('加载配置失败:', error);
+      }
+    };
+    
+    if (!configLoaded) {
+      loadConfig();
+    }
+  }, [api, configLoaded]);
 
   useEffect(() => {
     if (wsData?.type === 'init') {
+      console.log('收到初始化配置:', wsData.data.config);
       setConfig(wsData.data.config);
+      setConfigLoaded(true);
     } else if (wsData?.type === 'config') {
+      console.log('收到配置更新:', wsData.data);
       setConfig(wsData.data);
     }
   }, [wsData]);
@@ -30,7 +54,12 @@ export default function ConfigPage({ api, wsData }) {
       const result = await api.updateConfig(config);
       console.log('保存结果:', result);
       if (result.success) {
-        alert(`配置已保存成功！\nTCP模式: ${config.tcpMode}\n${config.tcpMode === 'client' ? `目标IP: ${config.tcpHost}\n目标端口: ${config.tcpPort}` : `监听端口: ${config.tcpPort}`}`);
+        // 使用服务器返回的最新配置更新本地状态
+        if (result.config) {
+          setConfig(result.config);
+          console.log('已更新本地配置为服务器返回的值:', result.config);
+        }
+        alert(`配置已保存成功！\nTCP模式: ${result.config?.tcpMode || config.tcpMode}\n${(result.config?.tcpMode || config.tcpMode) === 'client' ? `目标IP: ${result.config?.tcpHost || config.tcpHost}\n目标端口: ${result.config?.tcpPort || config.tcpPort}` : `监听端口: ${result.config?.tcpPort || config.tcpPort}`}`);
       } else {
         alert('保存失败: ' + (result.message || '未知错误'));
       }

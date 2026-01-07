@@ -1,4 +1,5 @@
 import express from 'express';
+import { saveZones } from '../config-manager.js';
 
 export function zoneRouter(state, zoneManager, broadcast) {
   const router = express.Router();
@@ -17,10 +18,20 @@ export function zoneRouter(state, zoneManager, broadcast) {
       state.zones.custom = custom;
     }
     
+    // 保存区域配置到文件
+    const saveSuccess = saveZones(state.zones);
+    if (!saveSuccess) {
+      console.warn('[警告] 区域配置保存到文件失败，但已更新内存中的配置');
+    }
+    
     zoneManager.updateConfig(state.zones, state.config);
     broadcast({ type: 'zones', data: state.zones });
     
-    res.json({ success: true, zones: state.zones });
+    res.json({ 
+      success: true, 
+      zones: state.zones,
+      saved: saveSuccess 
+    });
   });
   
   return router;

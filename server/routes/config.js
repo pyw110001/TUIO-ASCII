@@ -1,4 +1,5 @@
 import express from 'express';
+import { saveConfig } from '../config-manager.js';
 
 export function configRouter(state, broadcast, tuioProcessor, tcpSender, zoneManager) {
   const router = express.Router();
@@ -18,6 +19,12 @@ export function configRouter(state, broadcast, tuioProcessor, tcpSender, zoneMan
     Object.assign(state.config, newConfig);
     
     console.log('更新后配置:', state.config);
+    
+    // 保存配置到文件
+    const saveSuccess = saveConfig(state.config);
+    if (!saveSuccess) {
+      console.warn('[警告] 配置保存到文件失败，但已更新内存中的配置');
+    }
     
     // 更新相关组件
     if (newConfig.udpPort !== undefined && newConfig.udpPort !== oldConfig.udpPort) {
@@ -45,7 +52,11 @@ export function configRouter(state, broadcast, tuioProcessor, tcpSender, zoneMan
     // 通知前端
     broadcast({ type: 'config', data: state.config });
     
-    res.json({ success: true, config: state.config });
+    res.json({ 
+      success: true, 
+      config: state.config,
+      saved: saveSuccess 
+    });
   });
   
   return router;

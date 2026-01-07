@@ -11,10 +11,13 @@ export default function MonitorPage({ api, wsData }) {
     lastSentFrame: null,
     sentFrames: [],
     errors: [],
+    outputZoneFilter: null, // null表示输出所有区域，数字表示只输出该区域
   });
+  const [selectedOutputZone, setSelectedOutputZone] = useState(null);
 
   useEffect(() => {
     if (wsData?.type === 'init') {
+      const outputZoneFilter = wsData.data.outputZoneFilter ?? null;
       setStatus({
         cursors: wsData.data.cursors || [],
         zoneStates: wsData.data.zoneStates || [],
@@ -25,7 +28,9 @@ export default function MonitorPage({ api, wsData }) {
         lastSentFrame: wsData.data.lastSentFrame,
         sentFrames: wsData.data.sentFrames || [],
         errors: wsData.data.errors || [],
+        outputZoneFilter: outputZoneFilter,
       });
+      setSelectedOutputZone(outputZoneFilter);
     } else if (wsData?.type === 'sendStats') {
       setStatus((prev) => ({
         ...prev,
@@ -51,6 +56,12 @@ export default function MonitorPage({ api, wsData }) {
         ...prev,
         errors: [...prev.errors, { time: Date.now(), message: wsData.data }],
       }));
+    } else if (wsData?.type === 'outputZoneFilter') {
+      setStatus((prev) => ({
+        ...prev,
+        outputZoneFilter: wsData.data,
+      }));
+      setSelectedOutputZone(wsData.data);
     }
   }, [wsData]);
 
@@ -66,6 +77,31 @@ export default function MonitorPage({ api, wsData }) {
       alert(`发送成功: ${result.hex}`);
     } catch (error) {
       alert('发送失败: ' + error.message);
+    }
+  };
+
+  const handleSetOutputZone = async (zoneId) => {
+    try {
+      const result = await fetch('/api/monitor/set-output-zone', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ zoneId }),
+      });
+      const data = await result.json();
+      if (data.success) {
+        setSelectedOutputZone(data.outputZoneFilter);
+        if (data.outputZoneFilter === null) {
+          alert('已设置为输出所有区域');
+        } else {
+          alert(`已设置为只输出区域 ${data.outputZoneFilter}`);
+        }
+      } else {
+        alert('设置失败: ' + (data.error || '未知错误'));
+      }
+    } catch (error) {
+      alert('设置失败: ' + error.message);
     }
   };
 
@@ -119,15 +155,70 @@ export default function MonitorPage({ api, wsData }) {
       </div>
 
       <div className="card">
-        <h2>区域状态</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+          <h2 style={{ margin: 0 }}>区域状态</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <label style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>
+              输出过滤:
+            </label>
+            <select
+              value={selectedOutputZone === null ? '' : selectedOutputZone}
+              onChange={(e) => {
+                const value = e.target.value === '' ? null : parseInt(e.target.value);
+                handleSetOutputZone(value);
+              }}
+              style={{
+                padding: '6px 12px',
+                border: '1px solid var(--border-color)',
+                borderRadius: '4px',
+                fontSize: '14px',
+                background: 'var(--bg-secondary)',
+                color: 'var(--text-primary)',
+                cursor: 'pointer'
+              }}
+            >
+              <option value="">所有区域</option>
+              {status.zoneStates.map(([zoneId]) => (
+                <option key={zoneId} value={zoneId}>
+                  只输出区域 {zoneId}
+                </option>
+              ))}
+            </select>
+            {selectedOutputZone !== null && (
+              <span style={{ 
+                fontSize: '12px', 
+                color: '#ffc107',
+                padding: '4px 8px',
+                backgroundColor: 'rgba(255, 193, 7, 0.2)',
+                borderRadius: '4px'
+              }}>
+                当前只输出区域 {selectedOutputZone}
+              </span>
+            )}
+          </div>
+        </div>
         <div className="zone-list">
           {status.zoneStates.map(([zoneId, state]) => (
             <div
               key={zoneId}
               className={`zone-item ${state.occupied ? 'occupied' : 'unoccupied'}`}
+              style={{
+                border: selectedOutputZone === zoneId ? '2px solid #ffc107' : undefined,
+                backgroundColor: selectedOutputZone === zoneId ? 'rgba(255, 193, 7, 0.1)' : undefined
+              }}
             >
               <div>
                 <strong>区域 {zoneId}</strong> - {state.occupied ? '有人' : '无人'}
+                {selectedOutputZone === zoneId && (
+                  <span style={{ 
+                    marginLeft: '10px', 
+                    fontSize: '12px', 
+                    color: '#ffc107',
+                    fontWeight: 'bold'
+                  }}>
+                    [仅输出此区域]
+                  </span>
+                )}
               </div>
               <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
                 {new Date(state.lastChange).toLocaleTimeString()}
