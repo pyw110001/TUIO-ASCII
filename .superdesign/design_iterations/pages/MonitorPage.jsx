@@ -11,27 +11,26 @@ export default function MonitorPage({ api, wsData }) {
     lastSentFrame: null,
     sentFrames: [],
     errors: [],
-    outputZoneFilter: [], // 数组表示输出这些区域，为空表示输出所有
+    outputZoneFilter: null, // null表示输出所有区域，数字表示只输出该区域
   });
-  const [selectedOutputZones, setSelectedOutputZones] = useState([]);
-  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [selectedOutputZone, setSelectedOutputZone] = useState(null);
 
   useEffect(() => {
     if (wsData?.type === 'init') {
-      setStatus((prev) => ({
-        ...prev,
+      const outputZoneFilter = wsData.data.outputZoneFilter ?? null;
+      setStatus({
         cursors: wsData.data.cursors || [],
         zoneStates: wsData.data.zoneStates || [],
         tcpConnected: wsData.data.tcpConnected || false,
         sendCount: wsData.data.sendCount || 0,
-        sendSuccessCount: wsData.data.success || 0,
-        sendFailCount: wsData.data.failed || 0,
+        sendSuccessCount: wsData.data.sendSuccessCount || 0,
+        sendFailCount: wsData.data.sendFailCount || 0,
         lastSentFrame: wsData.data.lastSentFrame,
         sentFrames: wsData.data.sentFrames || [],
         errors: wsData.data.errors || [],
-        outputZoneFilter: wsData.data.outputZoneFilter || [],
-      }));
-      setSelectedOutputZones(wsData.data.outputZoneFilter || []);
+        outputZoneFilter: outputZoneFilter,
+      });
+      setSelectedOutputZone(outputZoneFilter);
     } else if (wsData?.type === 'sendStats') {
       setStatus((prev) => ({
         ...prev,
@@ -60,9 +59,9 @@ export default function MonitorPage({ api, wsData }) {
     } else if (wsData?.type === 'outputZoneFilter') {
       setStatus((prev) => ({
         ...prev,
-        outputZoneFilter: wsData.data || [],
+        outputZoneFilter: wsData.data,
       }));
-      setSelectedOutputZones(wsData.data || []);
+      setSelectedOutputZone(wsData.data);
     }
   }, [wsData]);
 
@@ -81,38 +80,29 @@ export default function MonitorPage({ api, wsData }) {
     }
   };
 
-  const handleSetOutputZones = async (zoneIds) => {
+  const handleSetOutputZone = async (zoneId) => {
     try {
       const result = await fetch('/api/monitor/set-output-zone', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ zoneIds }),
+        body: JSON.stringify({ zoneId }),
       });
       const data = await result.json();
       if (data.success) {
-        setSelectedOutputZones(data.outputZoneFilter);
+        setSelectedOutputZone(data.outputZoneFilter);
+        if (data.outputZoneFilter === null) {
+          alert('已设置为输出所有区域');
+        } else {
+          alert(`已设置为只输出区域 ${data.outputZoneFilter}`);
+        }
       } else {
         alert('设置失败: ' + (data.error || '未知错误'));
       }
     } catch (error) {
       alert('设置失败: ' + error.message);
     }
-  };
-
-  const toggleZoneFilter = (zoneId) => {
-    let newZones;
-    if (selectedOutputZones.includes(zoneId)) {
-      newZones = selectedOutputZones.filter(id => id !== zoneId);
-    } else {
-      newZones = [...selectedOutputZones, zoneId];
-    }
-    handleSetOutputZones(newZones);
-  };
-
-  const clearFilters = () => {
-    handleSetOutputZones([]);
   };
 
   return (
@@ -139,8 +129,9 @@ export default function MonitorPage({ api, wsData }) {
           <h2>TCP 连接状态</h2>
           <div style={{ marginBottom: '10px' }}>
             <span
-              className={`status-indicator ${status.tcpConnected ? 'connected' : 'disconnected'
-                }`}
+              className={`status-indicator ${
+                status.tcpConnected ? 'connected' : 'disconnected'
+              }`}
             />
             {status.tcpConnected ? '已连接' : '未连接'}
           </div>
@@ -167,115 +158,43 @@ export default function MonitorPage({ api, wsData }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
           <h2 style={{ margin: 0 }}>区域状态</h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', position: 'relative' }}>
-              <label style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>
-                输出过滤:
-              </label>
-              <div style={{ position: 'relative' }}>
-                <button
-                  className="btn btn-secondary"
-                  style={{
-                    padding: '6px 12px',
-                    fontSize: '14px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    minWidth: '150px',
-                    justifyContent: 'space-between'
-                  }}
-                  onClick={() => setIsFilterOpen(!isFilterOpen)}
-                >
-                  {selectedOutputZones.length === 0 ? '所有区域' : `已选 ${selectedOutputZones.length} 个区域`}
-                  <span>{isFilterOpen ? '▲' : '▼'}</span>
-                </button>
-
-                {isFilterOpen && (
-                  <div style={{
-                    position: 'absolute',
-                    top: '100%',
-                    right: 0,
-                    zIndex: 100,
-                    background: 'var(--bg-secondary)',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: '4px',
-                    marginTop: '4px',
-                    padding: '8px',
-                    minWidth: '200px',
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
-                  }}>
-                    <div
-                      style={{
-                        padding: '6px',
-                        borderBottom: '1px solid var(--border-color)',
-                        marginBottom: '6px',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center'
-                      }}
-                    >
-                      <span style={{ fontSize: '12px', fontWeight: 'bold' }}>选择输出区域</span>
-                      <button
-                        onClick={clearFilters}
-                        style={{
-                          fontSize: '11px',
-                          background: 'none',
-                          border: 'none',
-                          color: '#007bff',
-                          cursor: 'pointer',
-                          padding: 0
-                        }}
-                      >
-                        清空全部
-                      </button>
-                    </div>
-                    <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
-                      {status.zoneStates.map(([zoneId]) => (
-                        <label
-                          key={zoneId}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '8px',
-                            padding: '6px',
-                            cursor: 'pointer',
-                            fontSize: '14px',
-                            borderRadius: '4px',
-                            backgroundColor: selectedOutputZones.includes(zoneId) ? 'rgba(0,123,255,0.1)' : 'transparent'
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selectedOutputZones.includes(zoneId)}
-                            onChange={() => toggleZoneFilter(zoneId)}
-                          />
-                          区域 {zoneId}
-                        </label>
-                      ))}
-                    </div>
-                    <div style={{ marginTop: '8px', textAlign: 'right' }}>
-                      <button
-                        className="btn btn-primary"
-                        style={{ padding: '4px 10px', fontSize: '12px' }}
-                        onClick={() => setIsFilterOpen(false)}
-                      >
-                        关闭
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-              {selectedOutputZones.length > 0 && (
-                <span style={{
-                  fontSize: '12px',
-                  color: '#ffc107',
-                  padding: '4px 8px',
-                  backgroundColor: 'rgba(255, 193, 7, 0.2)',
-                  borderRadius: '4px'
-                }}>
-                  过滤中: {selectedOutputZones.join(', ')}
-                </span>
-              )}
-            </div>
+            <label style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>
+              输出过滤:
+            </label>
+            <select
+              value={selectedOutputZone === null ? '' : selectedOutputZone}
+              onChange={(e) => {
+                const value = e.target.value === '' ? null : parseInt(e.target.value);
+                handleSetOutputZone(value);
+              }}
+              style={{
+                padding: '6px 12px',
+                border: '1px solid var(--border-color)',
+                borderRadius: '4px',
+                fontSize: '14px',
+                background: 'var(--bg-secondary)',
+                color: 'var(--text-primary)',
+                cursor: 'pointer'
+              }}
+            >
+              <option value="">所有区域</option>
+              {status.zoneStates.map(([zoneId]) => (
+                <option key={zoneId} value={zoneId}>
+                  只输出区域 {zoneId}
+                </option>
+              ))}
+            </select>
+            {selectedOutputZone !== null && (
+              <span style={{ 
+                fontSize: '12px', 
+                color: '#ffc107',
+                padding: '4px 8px',
+                backgroundColor: 'rgba(255, 193, 7, 0.2)',
+                borderRadius: '4px'
+              }}>
+                当前只输出区域 {selectedOutputZone}
+              </span>
+            )}
           </div>
         </div>
         <div className="zone-list">
@@ -284,20 +203,20 @@ export default function MonitorPage({ api, wsData }) {
               key={zoneId}
               className={`zone-item ${state.occupied ? 'occupied' : 'unoccupied'}`}
               style={{
-                border: selectedOutputZones.includes(zoneId) ? '2px solid #ffc107' : undefined,
-                backgroundColor: selectedOutputZones.includes(zoneId) ? 'rgba(255, 193, 7, 0.1)' : undefined
+                border: selectedOutputZone === zoneId ? '2px solid #ffc107' : undefined,
+                backgroundColor: selectedOutputZone === zoneId ? 'rgba(255, 193, 7, 0.1)' : undefined
               }}
             >
               <div>
                 <strong>区域 {zoneId}</strong> - {state.occupied ? '有人' : '无人'}
-                {selectedOutputZones.includes(zoneId) && (
-                  <span style={{
-                    marginLeft: '10px',
-                    fontSize: '12px',
+                {selectedOutputZone === zoneId && (
+                  <span style={{ 
+                    marginLeft: '10px', 
+                    fontSize: '12px', 
                     color: '#ffc107',
                     fontWeight: 'bold'
                   }}>
-                    [输出中]
+                    [仅输出此区域]
                   </span>
                 )}
               </div>
@@ -327,11 +246,11 @@ export default function MonitorPage({ api, wsData }) {
                   padding: '12px',
                   border: `1px solid ${frame.sent === true ? '#28a745' : frame.sent === false ? '#dc3545' : '#ffc107'}`,
                   borderRadius: '4px',
-                  backgroundColor: frame.sent === true
-                    ? 'rgba(40, 167, 69, 0.15)'
-                    : frame.sent === false
-                      ? 'rgba(220, 53, 69, 0.15)'
-                      : 'rgba(255, 193, 7, 0.15)',
+                  backgroundColor: frame.sent === true 
+                    ? 'rgba(40, 167, 69, 0.15)' 
+                    : frame.sent === false 
+                    ? 'rgba(220, 53, 69, 0.15)' 
+                    : 'rgba(255, 193, 7, 0.15)',
                   color: 'var(--text-primary)',
                 }}
               >
@@ -345,18 +264,18 @@ export default function MonitorPage({ api, wsData }) {
                   <span style={{ color: frame.tcpConnected ? '#28a745' : '#dc3545', marginRight: '15px' }}>
                     TCP: {frame.tcpConnected ? '已连接' : '未连接'}
                   </span>
-                  <span style={{
+                  <span style={{ 
                     color: frame.sent === true ? '#28a745' : frame.sent === false ? '#dc3545' : '#ffc107',
                     marginRight: '15px'
                   }}>
                     状态: {
                       frame.sent === true ? `✓ 已发送 (${frame.bytesSent || 8} bytes)` :
-                        frame.sent === false ? `✗ 发送失败${frame.error ? ': ' + frame.error : ''}` :
-                          '⏳ 发送中...'
+                      frame.sent === false ? `✗ 发送失败${frame.error ? ': ' + frame.error : ''}` :
+                      '⏳ 发送中...'
                     }
                   </span>
                 </div>
-                <div className="hex-frame" style={{
+                <div className="hex-frame" style={{ 
                   fontSize: '13px',
                   margin: 0
                 }}>

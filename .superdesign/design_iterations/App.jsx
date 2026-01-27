@@ -21,7 +21,7 @@ function App() {
 
   return (
     <div className="container">
-      <div className="header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <h1 className="app-title">
           TUIO to TCP Protocol Converter
         </h1>
@@ -63,4 +63,3 @@ function App() {
 }
 
 export default App;
-

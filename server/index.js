@@ -2,6 +2,15 @@ import express from 'express';
 import { WebSocketServer } from 'ws';
 import http from 'http';
 import cors from 'cors';
+
+// 全局异常处理，防止服务器崩溃
+process.on('uncaughtException', (err) => {
+  console.error('[CRITICAL] Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[CRITICAL] Unhandled Rejection at:', promise, 'reason:', reason);
+});
 import { TUIOProcessor } from './tuio-processor.js';
 import { ZoneManager } from './zone-manager.js';
 import { ProtocolEncoder } from './protocol-encoder.js';
@@ -35,7 +44,7 @@ const state = {
   lastSentFrame: null,
   sentFrames: [], // 帧历史记录（最近50条）
   errors: [],
-  outputZoneFilter: null // null表示输出所有区域，数字表示只输出该区域
+  outputZoneFilter: [] // 空数组表示输出所有区域，数组中的数字表示只输出这些区域
 };
 
 // 初始化组件
@@ -65,23 +74,23 @@ const tcpSender = new TCPSender(
 let lastHeartbeat = Date.now();
 setInterval(() => {
   const now = Date.now();
-  
+
   // 清理超时 cursor
   for (const [id, cursor] of state.cursors.entries()) {
     if (now - cursor.lastUpdate > state.config.cursorTimeout) {
       state.cursors.delete(id);
     }
   }
-  
+
   // 更新区域状态
   const newZoneStates = zoneManager.updateZoneStates(state.cursors);
   const changed = checkZoneStateChanges(state.zoneStates, newZoneStates);
   state.zoneStates = newZoneStates;
-  
+
   if (changed.length > 0) {
     broadcast({ type: 'zoneStates', data: Array.from(state.zoneStates.entries()) });
   }
-  
+
   // 发送策略
   if (state.config.sendStrategy === 'onChange' && changed.length > 0) {
     sendFramesForZones(changed);
@@ -89,8 +98,11 @@ setInterval(() => {
     sendFramesForZones(Array.from(state.zoneStates.keys()));
     lastHeartbeat = now;
   }
-  
-  broadcast({ type: 'cursors', data: Array.from(state.cursors.values()) });
+
+  // 广播 cursors (降频到 100ms 以减轻负担)
+  if (now % 100 < 50) {
+    broadcast({ type: 'cursors', data: Array.from(state.cursors.values()) });
+  }
 }, 50);
 
 function checkZoneStateChanges(oldStates, newStates) {
@@ -107,21 +119,21 @@ function checkZoneStateChanges(oldStates, newStates) {
 function sendFramesForZones(zoneIds) {
   // 如果设置了区域过滤，只发送指定区域
   let zonesToSend = zoneIds;
-  if (state.outputZoneFilter !== null) {
-    zonesToSend = zoneIds.filter(id => id === state.outputZoneFilter);
+  if (state.outputZoneFilter && state.outputZoneFilter.length > 0) {
+    zonesToSend = zoneIds.filter(id => state.outputZoneFilter.includes(id));
     if (zonesToSend.length === 0) {
       // 如果过滤后没有区域，不发送任何数据
       return;
     }
   }
-  
+
   for (const zoneId of zonesToSend) {
     const zoneState = state.zoneStates.get(zoneId);
     if (!zoneState) continue;
-    
+
     const frame = protocolEncoder.encode(zoneId, zoneState.occupied);
     const hexFrame = Array.from(frame).map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(' ');
-    
+
     // 记录要发送的帧（无论TCP是否连接）
     const frameInfo = {
       zoneId,
@@ -133,11 +145,11 @@ function sendFramesForZones(zoneIds) {
       bytesSent: 0,
       error: null
     };
-    
+
     // 尝试发送，带确认回调
     tcpSender.send(frame, (success, bytesSent, error) => {
       state.sendCount++;
-      
+
       if (success) {
         state.sendSuccessCount++;
         frameInfo.sent = true;
@@ -149,28 +161,30 @@ function sendFramesForZones(zoneIds) {
         frameInfo.error = error || 'TCP未连接';
         console.log(`[TCP] ✗ 发送失败: Zone ${zoneId} ${zoneState.occupied ? '有人' : '无人'} - ${hexFrame} - ${error || 'TCP未连接'}`);
       }
-      
+
       // 更新帧信息
       state.lastSentFrame = { ...frameInfo };
-      
+
       // 更新历史记录中的对应帧
-      const frameIndex = state.sentFrames.findIndex(f => 
-        f.zoneId === frameInfo.zoneId && 
+      const frameIndex = state.sentFrames.findIndex(f =>
+        f.zoneId === frameInfo.zoneId &&
         f.time === frameInfo.time
       );
       if (frameIndex >= 0) {
         state.sentFrames[frameIndex] = { ...frameInfo };
       }
-      
+
       // 广播更新
       broadcast({ type: 'frameSent', data: { ...frameInfo } });
-      broadcast({ type: 'sendStats', data: {
-        total: state.sendCount,
-        success: state.sendSuccessCount,
-        failed: state.sendFailCount
-      }});
+      broadcast({
+        type: 'sendStats', data: {
+          total: state.sendCount,
+          success: state.sendSuccessCount,
+          failed: state.sendFailCount
+        }
+      });
     });
-    
+
     // 立即添加到历史记录（状态为发送中）
     state.lastSentFrame = frameInfo;
     state.sentFrames.push(frameInfo);
@@ -186,23 +200,25 @@ function sendFramesForZones(zoneIds) {
 const clients = new Set();
 wss.on('connection', (ws) => {
   clients.add(ws);
-  
+
   // 发送初始状态
-  ws.send(JSON.stringify({ type: 'init', data: {
-    config: state.config,
-    zones: state.zones,
-    cursors: Array.from(state.cursors.values()),
-    zoneStates: Array.from(state.zoneStates.entries()),
-    tcpConnected: state.tcpConnected,
-    sendCount: state.sendCount,
-    sendSuccessCount: state.sendSuccessCount,
-    sendFailCount: state.sendFailCount,
-    lastSentFrame: state.lastSentFrame,
-    sentFrames: state.sentFrames.slice(-20), // 只发送最近20条
-    errors: state.errors.slice(-20),
-    outputZoneFilter: state.outputZoneFilter
-  }}));
-  
+  ws.send(JSON.stringify({
+    type: 'init', data: {
+      config: state.config,
+      zones: state.zones,
+      cursors: Array.from(state.cursors.values()),
+      zoneStates: Array.from(state.zoneStates.entries()),
+      tcpConnected: state.tcpConnected,
+      sendCount: state.sendCount,
+      sendSuccessCount: state.sendSuccessCount,
+      sendFailCount: state.sendFailCount,
+      lastSentFrame: state.lastSentFrame,
+      sentFrames: state.sentFrames.slice(-20), // 只发送最近20条
+      errors: state.errors.slice(-20),
+      outputZoneFilter: state.outputZoneFilter
+    }
+  }));
+
   ws.on('close', () => {
     clients.delete(ws);
   });
@@ -239,28 +255,34 @@ app.get('/api/status', (req, res) => {
 
 // 设置输出区域过滤
 app.post('/api/monitor/set-output-zone', (req, res) => {
-  const { zoneId } = req.body;
-  
-  // zoneId 为 null 或 undefined 表示输出所有区域
-  // 为数字表示只输出该区域
-  if (zoneId === null || zoneId === undefined) {
-    state.outputZoneFilter = null;
+  const { zoneId, zoneIds } = req.body;
+
+  // 处理 zoneIds (支持多选) 或 zoneId (兼容旧版本)
+  let newFilters = [];
+
+  if (Array.isArray(zoneIds)) {
+    newFilters = zoneIds.map(id => parseInt(id)).filter(id => !isNaN(id) && id >= 1);
+  } else if (zoneId !== null && zoneId !== undefined) {
+    const zoneIdNum = parseInt(zoneId);
+    if (!isNaN(zoneIdNum) && zoneIdNum >= 1) {
+      newFilters = [zoneIdNum];
+    }
+  }
+
+  state.outputZoneFilter = newFilters;
+
+  if (newFilters.length === 0) {
     console.log('[监控] 已设置为输出所有区域');
   } else {
-    const zoneIdNum = parseInt(zoneId);
-    if (isNaN(zoneIdNum) || zoneIdNum < 1) {
-      return res.status(400).json({ error: '无效的区域ID' });
-    }
-    state.outputZoneFilter = zoneIdNum;
-    console.log(`[监控] 已设置为只输出区域 ${zoneIdNum}`);
+    console.log(`[监控] 已设置为只输出区域: ${newFilters.join(', ')}`);
   }
-  
+
   // 广播更新
   broadcast({ type: 'outputZoneFilter', data: state.outputZoneFilter });
-  
-  res.json({ 
-    success: true, 
-    outputZoneFilter: state.outputZoneFilter 
+
+  res.json({
+    success: true,
+    outputZoneFilter: state.outputZoneFilter
   });
 });
 
